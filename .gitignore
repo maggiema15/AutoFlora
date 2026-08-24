@@ -1,0 +1,8 @@
+# CMake build output
+build/
+Debug/
+Release/
+
+# OS junk
+Thumbs.db
+.DS_Store
