@@ -40,6 +40,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
@@ -50,6 +52,7 @@ UART_HandleTypeDef huart1;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -89,26 +92,118 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   char msg[64];
+
+  /* Give AHT20 time after power-up */
+  HAL_Delay(40);
+
+  /* AHT20 initialization command */
+  uint8_t initCmd[3] = {0xBE, 0x08, 0x00};
+
+  HAL_I2C_Master_Transmit(
+      &hi2c1,
+      0x38 << 1,
+      initCmd,
+      3,
+      100
+  );
+
+  HAL_Delay(10);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1){
-    
-    uint32_t uptime = HAL_GetTick() / 1000;
 
-    int len = snprintf(msg, sizeof(msg),
-                      "AutoFlora | Uptime: %lu s\r\n",
-                      uptime);
+    uint8_t triggerCmd[3] = {0xAC, 0x33, 0x00};
+    uint8_t data[6];
 
-    HAL_UART_Transmit(&huart1,
-                      (uint8_t *)msg,
-                      len,
-                      HAL_MAX_DELAY);
+    HAL_StatusTypeDef result;
 
-    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+    /* Tell AHT20 to take a measurement */
+    result = HAL_I2C_Master_Transmit(
+        &hi2c1,
+        0x38 << 1,
+        triggerCmd,
+        3,
+        100
+    );
+
+    if (result == HAL_OK)
+    {
+        /* Wait for measurement to finish */
+        HAL_Delay(80);
+
+        /* Read 6 bytes back from AHT20 */
+        result = HAL_I2C_Master_Receive(
+            &hi2c1,
+            0x38 << 1,
+            data,
+            6,
+            100
+        );
+
+        if (result == HAL_OK)
+        {
+            /* Reconstruct the 20-bit raw temperature value */
+            uint32_t rawTemperature =
+                ((uint32_t)(data[3] & 0x0F) << 16) |
+                ((uint32_t)data[4] << 8) |
+                data[5];
+
+            /* Convert raw value to degrees Celsius */
+            float temperature =
+                ((float)rawTemperature * 200.0f / 1048576.0f)
+                - 50.0f;
+
+            uint32_t rawHumidity =
+              ((uint32_t)data[1] << 12) |
+              ((uint32_t)data[2] << 4) |
+              ((data[3] & 0xF0) >> 4);
+
+          float humidity = ((float)rawHumidity * 100.0f / 1048576.0f);
+
+            /* Print temperature through UART */
+            int len = snprintf(
+                msg,
+                sizeof(msg),
+                "Temperature: %.2f C | Humidity: %.2f %%\r\n",
+                temperature, 
+                humidity
+            );
+
+            HAL_UART_Transmit(
+                &huart1,
+                (uint8_t *)msg,
+                len,
+                HAL_MAX_DELAY
+            );
+        }
+        else
+        {
+            char error[] = "AHT20 read failed\r\n";
+
+            HAL_UART_Transmit(
+                &huart1,
+                (uint8_t *)error,
+                sizeof(error) - 1,
+                HAL_MAX_DELAY
+            );
+        }
+    }
+    else
+    {
+        char error[] = "AHT20 command failed\r\n";
+
+        HAL_UART_Transmit(
+            &huart1,
+            (uint8_t *)error,
+            sizeof(error) - 1,
+            HAL_MAX_DELAY
+        );
+    }
 
     HAL_Delay(1000);
 
@@ -153,6 +248,40 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
@@ -203,6 +332,7 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
