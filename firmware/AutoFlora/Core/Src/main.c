@@ -110,7 +110,21 @@ int main(void)
       100
   );
 
-  HAL_Delay(10);
+  /* Give BH1750 time after power-up */
+  HAL_Delay(40);
+
+  /* BH1750 mode command */
+  uint8_t bh1750Mode = 0x10;
+
+  HAL_I2C_Master_Transmit(
+      &hi2c1,
+      0x23 << 1,
+      &bh1750Mode,
+      1,
+      100
+  );
+
+  HAL_Delay(40);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -204,6 +218,54 @@ int main(void)
             HAL_MAX_DELAY
         );
     }
+
+    uint8_t bhData[2];
+
+    HAL_StatusTypeDef bhResult;
+
+    bhResult = HAL_I2C_Master_Receive(
+        &hi2c1,
+        0x23 << 1,
+        bhData,
+        2,
+        100
+    );
+
+    if (bhResult == HAL_OK)
+    {
+        uint16_t rawLight =
+            ((uint16_t)bhData[0] << 8) |
+            bhData[1];
+
+        float lux = rawLight / 1.2f;
+
+        int len = snprintf(
+            msg,
+            sizeof(msg),
+            "BH1750 | Raw: %u | Light: %.2f lux\r\n",
+            lux
+        );
+
+        HAL_UART_Transmit(
+            &huart1,
+            (uint8_t *)msg,
+            len,
+            HAL_MAX_DELAY
+        );
+    }
+    else
+    {
+        char error[] = "BH1750 read failed\r\n";
+
+        HAL_UART_Transmit(
+            &huart1,
+            (uint8_t *)error,
+            sizeof(error) - 1,
+            HAL_MAX_DELAY
+        );
+    }
+
+    HAL_Delay(1000);
 
     HAL_Delay(1000);
 
