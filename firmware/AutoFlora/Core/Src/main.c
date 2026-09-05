@@ -94,6 +94,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+
   char msg[64];
 
   /* Give AHT20 time after power-up */
@@ -129,14 +130,15 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1){
+  while (1)
+{
+    /* ---------------- AHT20 ---------------- */
 
     uint8_t triggerCmd[3] = {0xAC, 0x33, 0x00};
     uint8_t data[6];
 
     HAL_StatusTypeDef result;
 
-    /* Tell AHT20 to take a measurement */
     result = HAL_I2C_Master_Transmit(
         &hi2c1,
         0x38 << 1,
@@ -147,10 +149,8 @@ int main(void)
 
     if (result == HAL_OK)
     {
-        /* Wait for measurement to finish */
         HAL_Delay(80);
 
-        /* Read 6 bytes back from AHT20 */
         result = HAL_I2C_Master_Receive(
             &hi2c1,
             0x38 << 1,
@@ -161,30 +161,28 @@ int main(void)
 
         if (result == HAL_OK)
         {
-            /* Reconstruct the 20-bit raw temperature value */
             uint32_t rawTemperature =
                 ((uint32_t)(data[3] & 0x0F) << 16) |
                 ((uint32_t)data[4] << 8) |
                 data[5];
 
-            /* Convert raw value to degrees Celsius */
             float temperature =
                 ((float)rawTemperature * 200.0f / 1048576.0f)
                 - 50.0f;
 
             uint32_t rawHumidity =
-              ((uint32_t)data[1] << 12) |
-              ((uint32_t)data[2] << 4) |
-              ((data[3] & 0xF0) >> 4);
+                ((uint32_t)data[1] << 12) |
+                ((uint32_t)data[2] << 4) |
+                ((data[3] & 0xF0) >> 4);
 
-          float humidity = ((float)rawHumidity * 100.0f / 1048576.0f);
+            float humidity =
+                ((float)rawHumidity * 100.0f / 1048576.0f);
 
-            /* Print temperature through UART */
             int len = snprintf(
                 msg,
                 sizeof(msg),
                 "Temperature: %.2f C | Humidity: %.2f %%\r\n",
-                temperature, 
+                temperature,
                 humidity
             );
 
@@ -219,8 +217,10 @@ int main(void)
         );
     }
 
-    uint8_t bhData[2];
 
+    /* ---------------- BH1750 ---------------- */
+
+    uint8_t bhData[2];
     HAL_StatusTypeDef bhResult;
 
     bhResult = HAL_I2C_Master_Receive(
@@ -243,6 +243,7 @@ int main(void)
             msg,
             sizeof(msg),
             "BH1750 | Raw: %u | Light: %.2f lux\r\n",
+            rawLight,
             lux
         );
 
@@ -265,14 +266,29 @@ int main(void)
         );
     }
 
-    HAL_Delay(1000);
+
+    /* ---------------- PB0 DIGITAL TEST ---------------- */
+
+    GPIO_PinState pinState =
+        HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
+
+    int len = snprintf(
+        msg,
+        sizeof(msg),
+        "PB0 digital state: %d\r\n",
+        pinState
+    );
+
+    HAL_UART_Transmit(
+        &huart1,
+        (uint8_t *)msg,
+        len,
+        HAL_MAX_DELAY
+    );
+
 
     HAL_Delay(1000);
-
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-  }
+}
   /* USER CODE END 3 */
 }
 
@@ -393,8 +409,8 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
@@ -405,6 +421,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB0 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
