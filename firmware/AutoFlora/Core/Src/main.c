@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,6 +41,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 I2C_HandleTypeDef hi2c1;
 
 UART_HandleTypeDef huart1;
@@ -53,19 +56,190 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
-
+static HAL_StatusTypeDef I2C1_BusRecovery(void);
+static void UART_TransmitBoxBorder(void);
+static void UART_TransmitBoxLine(const char *message, uint16_t length);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define UART_BOX_CONTENT_WIDTH 62U
 
+static void UART_TransmitBoxBorder(void)
+{
+    char border[UART_BOX_CONTENT_WIDTH + 7U];
+
+    memset(border, '-', UART_BOX_CONTENT_WIDTH + 4U);
+    border[UART_BOX_CONTENT_WIDTH + 4U] = '\r';
+    border[UART_BOX_CONTENT_WIDTH + 5U] = '\n';
+
+    HAL_UART_Transmit(
+        &huart1,
+        (uint8_t *)border,
+        UART_BOX_CONTENT_WIDTH + 6U,
+        HAL_MAX_DELAY
+    );
+}
+
+static void UART_TransmitBoxLine(const char *message, uint16_t length)
+{
+    char line[UART_BOX_CONTENT_WIDTH + 7U];
+    uint16_t printableLength = length;
+    uint16_t offset = 0;
+
+    while (printableLength > 0U &&
+           (message[printableLength - 1U] == '\r' ||
+            message[printableLength - 1U] == '\n'))
+    {
+        printableLength--;
+    }
+
+    do
+    {
+        uint16_t remaining = printableLength - offset;
+        uint16_t chunkLength = remaining > UART_BOX_CONTENT_WIDTH
+            ? UART_BOX_CONTENT_WIDTH
+            : remaining;
+
+        line[0] = '|';
+        line[1] = ' ';
+        memset(&line[2], ' ', UART_BOX_CONTENT_WIDTH);
+        memcpy(&line[2], &message[offset], chunkLength);
+        line[UART_BOX_CONTENT_WIDTH + 2U] = ' ';
+        line[UART_BOX_CONTENT_WIDTH + 3U] = '|';
+        line[UART_BOX_CONTENT_WIDTH + 4U] = '\r';
+        line[UART_BOX_CONTENT_WIDTH + 5U] = '\n';
+
+        HAL_UART_Transmit(
+            &huart1,
+            (uint8_t *)line,
+            UART_BOX_CONTENT_WIDTH + 6U,
+            HAL_MAX_DELAY
+        );
+
+        offset += chunkLength;
+    } while (offset < printableLength);
+}
+
+static HAL_StatusTypeDef I2C1_BusRecovery(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    /*
+     * PB6 = SCL
+     * PB7 = SDA
+     */
+
+    /* 1. Disable I2C1 */
+    __HAL_I2C_DISABLE(&hi2c1);
+
+    /* Make sure GPIOB clock is enabled */
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+
+
+    /* 2. Configure SCL + SDA as open-drain GPIO outputs */
+    GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+
+    /* Release both lines HIGH before changing mode */
+    HAL_GPIO_WritePin(
+        GPIOB,
+        GPIO_PIN_6 | GPIO_PIN_7,
+        GPIO_PIN_SET
+    );
+
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+    HAL_Delay(1);
+
+
+    /* 3. Both lines should now actually be HIGH */
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6) != GPIO_PIN_SET ||
+        HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) != GPIO_PIN_SET)
+    {
+        return HAL_ERROR;
+    }
+
+
+    /* 4. Force SDA LOW */
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+    HAL_Delay(1);
+
+    /* 5. Verify SDA is LOW */
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) != GPIO_PIN_RESET)
+    {
+        return HAL_ERROR;
+    }
+
+
+    /* 6. Force SCL LOW */
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+    HAL_Delay(1);
+
+    /* 7. Verify SCL is LOW */
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6) != GPIO_PIN_RESET)
+    {
+        return HAL_ERROR;
+    }
+
+
+    /* 8. Release SCL HIGH */
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+    HAL_Delay(1);
+
+    /* 9. Verify SCL is HIGH */
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6) != GPIO_PIN_SET)
+    {
+        return HAL_ERROR;
+    }
+
+
+    /* 10. Release SDA HIGH */
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
+    HAL_Delay(1);
+
+    /* 11. Verify SDA is HIGH */
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) != GPIO_PIN_SET)
+    {
+        return HAL_ERROR;
+    }
+
+
+    /* 12. Give PB6/PB7 back to the I2C peripheral */
+    GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+
+    /* 13 + 14. Software-reset I2C1 */
+    SET_BIT(I2C1->CR1, I2C_CR1_SWRST);
+    HAL_Delay(1);
+    CLEAR_BIT(I2C1->CR1, I2C_CR1_SWRST);
+
+
+    /*
+     * Re-run HAL initialization so CR2/CCR/TRISE/etc.
+     * are restored and I2C1 is enabled again.
+     */
+    if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+    {
+        return HAL_ERROR;
+    }
+
+    return HAL_OK;
+}
 /* USER CODE END 0 */
 
 /**
   * @brief  The application entry point.
   * @retval int
   */
+  
 int main(void)
 {
 
@@ -93,23 +267,71 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_I2C1_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
   char msg[64];
 
-  /* Give AHT20 time after power-up */
-  HAL_Delay(40);
+  /* ADC calibration - unrelated to I2C, okay to leave here */
+  if (HAL_ADCEx_Calibration_Start(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
-  /* AHT20 initialization command */
+  /* Let AHT20 and I2C pull-ups stabilize first */
+  HAL_Delay(100);
+
+  UART_TransmitBoxBorder();
+
+  /* ============================= */
+  /* I2C BUS RECOVERY              */
+  /* ============================= */
+
+  if (I2C1_BusRecovery() == HAL_OK)
+  {
+    char recoveryMsg[] = "I2C recovery OK\r\n";
+
+    UART_TransmitBoxLine(recoveryMsg, sizeof(recoveryMsg) - 1);
+  }
+  else
+  {
+    char recoveryMsg[] = "I2C recovery FAILED\r\n";
+
+    UART_TransmitBoxLine(recoveryMsg, sizeof(recoveryMsg) - 1);
+  }
+
+  /* ============================= */
+  /* AHT20 INITIALIZATION          */
+  /* ============================= */
+
   uint8_t initCmd[3] = {0xBE, 0x08, 0x00};
 
-  HAL_I2C_Master_Transmit(
+  HAL_StatusTypeDef ahtInitStatus = HAL_I2C_Master_Transmit(
       &hi2c1,
       0x38 << 1,
       initCmd,
       3,
       100
   );
+
+  if (ahtInitStatus == HAL_OK)
+  {
+    char ahtMsg[] = "AHT20 init OK\r\n";
+
+    UART_TransmitBoxLine(ahtMsg, sizeof(ahtMsg) - 1);
+  }
+  else
+  {
+    int len = snprintf(
+        msg,
+        sizeof(msg),
+        "AHT20 init failed: status=%d error=0x%08lX\r\n",
+        ahtInitStatus,
+        HAL_I2C_GetError(&hi2c1)
+    );
+
+    UART_TransmitBoxLine(msg, (uint16_t)len);
+  }
 
   /* Give BH1750 time after power-up */
   HAL_Delay(40);
@@ -126,20 +348,25 @@ int main(void)
   );
 
   HAL_Delay(40);
+  UART_TransmitBoxBorder();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
+while (1)
 {
-    /* ---------------- AHT20 ---------------- */
+    UART_TransmitBoxBorder();
+    int len;
+
+    /* ==================== AHT20 ==================== */
 
     uint8_t triggerCmd[3] = {0xAC, 0x33, 0x00};
     uint8_t data[6];
 
-    HAL_StatusTypeDef result;
+    HAL_StatusTypeDef ahtResult;
 
-    result = HAL_I2C_Master_Transmit(
+    /* Tell AHT20 to take a measurement */
+    ahtResult = HAL_I2C_Master_Transmit(
         &hi2c1,
         0x38 << 1,
         triggerCmd,
@@ -147,11 +374,12 @@ int main(void)
         100
     );
 
-    if (result == HAL_OK)
+    if (ahtResult == HAL_OK)
     {
         HAL_Delay(80);
 
-        result = HAL_I2C_Master_Receive(
+        /* Read measurement */
+        ahtResult = HAL_I2C_Master_Receive(
             &hi2c1,
             0x38 << 1,
             data,
@@ -159,7 +387,7 @@ int main(void)
             100
         );
 
-        if (result == HAL_OK)
+        if (ahtResult == HAL_OK)
         {
             uint32_t rawTemperature =
                 ((uint32_t)(data[3] & 0x0F) << 16) |
@@ -178,7 +406,7 @@ int main(void)
             float humidity =
                 ((float)rawHumidity * 100.0f / 1048576.0f);
 
-            int len = snprintf(
+            len = snprintf(
                 msg,
                 sizeof(msg),
                 "Temperature: %.2f C | Humidity: %.2f %%\r\n",
@@ -186,50 +414,42 @@ int main(void)
                 humidity
             );
 
-            HAL_UART_Transmit(
-                &huart1,
-                (uint8_t *)msg,
-                len,
-                HAL_MAX_DELAY
-            );
+            UART_TransmitBoxLine(msg, (uint16_t)len);
         }
         else
         {
-            char error[] = "AHT20 read failed\r\n";
+            char error[80];
+            snprintf(error, sizeof(error),
+                     "AHT20 read failed: status=%u error=0x%08lX\r\n",
+                     (unsigned int)ahtResult,
+                     (unsigned long)HAL_I2C_GetError(&hi2c1));
 
-            HAL_UART_Transmit(
-                &huart1,
-                (uint8_t *)error,
-                sizeof(error) - 1,
-                HAL_MAX_DELAY
-            );
+            UART_TransmitBoxLine(error, (uint16_t)strlen(error));
         }
     }
     else
     {
-        char error[] = "AHT20 command failed\r\n";
+        char error[80];
+        snprintf(error, sizeof(error),
+                 "AHT20 command failed: status=%u error=0x%08lX\r\n",
+                 (unsigned int)ahtResult,
+                 (unsigned long)HAL_I2C_GetError(&hi2c1));
 
-        HAL_UART_Transmit(
-            &huart1,
-            (uint8_t *)error,
-            sizeof(error) - 1,
-            HAL_MAX_DELAY
-        );
+        UART_TransmitBoxLine(error, (uint16_t)strlen(error));
     }
 
-
-    /* ---------------- BH1750 ---------------- */
+    /* ==================== BH1750 ==================== */
 
     uint8_t bhData[2];
-    HAL_StatusTypeDef bhResult;
 
-    bhResult = HAL_I2C_Master_Receive(
-        &hi2c1,
-        0x23 << 1,
-        bhData,
-        2,
-        100
-    );
+    HAL_StatusTypeDef bhResult =
+        HAL_I2C_Master_Receive(
+            &hi2c1,
+            0x23 << 1,
+            bhData,
+            2,
+            100
+        );
 
     if (bhResult == HAL_OK)
     {
@@ -239,7 +459,7 @@ int main(void)
 
         float lux = rawLight / 1.2f;
 
-        int len = snprintf(
+        len = snprintf(
             msg,
             sizeof(msg),
             "BH1750 | Raw: %u | Light: %.2f lux\r\n",
@@ -247,48 +467,67 @@ int main(void)
             lux
         );
 
-        HAL_UART_Transmit(
-            &huart1,
-            (uint8_t *)msg,
-            len,
-            HAL_MAX_DELAY
-        );
+        UART_TransmitBoxLine(msg, (uint16_t)len);
     }
     else
     {
-        char error[] = "BH1750 read failed\r\n";
+        char error[80];
+        snprintf(error, sizeof(error),
+                 "BH1750 read failed: status=%u error=0x%08lX\r\n",
+                 (unsigned int)bhResult,
+                 (unsigned long)HAL_I2C_GetError(&hi2c1));
 
-        HAL_UART_Transmit(
-            &huart1,
-            (uint8_t *)error,
-            sizeof(error) - 1,
-            HAL_MAX_DELAY
-        );
+        UART_TransmitBoxLine(error, (uint16_t)strlen(error));
     }
 
 
-    /* ---------------- PB0 DIGITAL TEST ---------------- */
+    /* ==================== SOIL SENSOR ==================== */
 
-    GPIO_PinState pinState =
-        HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
+    HAL_StatusTypeDef adcStart =
+        HAL_ADC_Start(&hadc1);
 
-    int len = snprintf(
-        msg,
-        sizeof(msg),
-        "PB0 digital state: %d\r\n",
-        pinState
-    );
+    if (adcStart == HAL_OK)
+    {
+        HAL_StatusTypeDef adcPoll =
+            HAL_ADC_PollForConversion(&hadc1, 100);
 
-    HAL_UART_Transmit(
-        &huart1,
-        (uint8_t *)msg,
-        len,
-        HAL_MAX_DELAY
-    );
+        if (adcPoll == HAL_OK)
+        {
+            uint32_t soilRaw =
+                HAL_ADC_GetValue(&hadc1);
+
+            len = snprintf(
+                msg,
+                sizeof(msg),
+                "Soil raw ADC: %lu\r\n",
+                (unsigned long)soilRaw
+            );
+
+            UART_TransmitBoxLine(msg, (uint16_t)len);
+        }
+        else
+        {
+            char error[] = "Soil ADC conversion failed\r\n";
+
+            UART_TransmitBoxLine(error, sizeof(error) - 1);
+        }
+    }
+    else
+    {
+        char error[] = "Soil ADC start failed\r\n";
+
+        UART_TransmitBoxLine(error, sizeof(error) - 1);
+    }
+    HAL_ADC_Stop(&hadc1);
+
+    UART_TransmitBoxBorder();
 
 
-    HAL_Delay(1000);
-}
+    /* Wait before next sensor update */
+    HAL_Delay(2000);
+  }
+  /* USER CODE END WHILE */
+  /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
 
@@ -300,6 +539,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -326,6 +566,59 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV2;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Common config
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_0;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_55CYCLES_5;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
@@ -409,8 +702,8 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
@@ -421,12 +714,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PB0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
