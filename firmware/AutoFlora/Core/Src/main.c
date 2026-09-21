@@ -58,7 +58,6 @@ static void MX_USART1_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
-static HAL_StatusTypeDef I2C1_BusRecovery(void);
 static void UART_TransmitBoxBorder(void);
 static void UART_TransmitBoxLine(const char *message, uint16_t length);
 /* USER CODE END PFP */
@@ -122,117 +121,6 @@ static void UART_TransmitBoxLine(const char *message, uint16_t length)
         offset += chunkLength;
     } while (offset < printableLength);
 }
-
-static HAL_StatusTypeDef I2C1_BusRecovery(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    /*
-     * PB6 = SCL
-     * PB7 = SDA
-     */
-
-    /* 1. Disable I2C1 */
-    __HAL_I2C_DISABLE(&hi2c1);
-
-    /* Make sure GPIOB clock is enabled */
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-
-
-    /* 2. Configure SCL + SDA as open-drain GPIO outputs */
-    GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-
-    /* Release both lines HIGH before changing mode */
-    HAL_GPIO_WritePin(
-        GPIOB,
-        GPIO_PIN_6 | GPIO_PIN_7,
-        GPIO_PIN_SET
-    );
-
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    HAL_Delay(1);
-
-
-    /* 3. Both lines should now actually be HIGH */
-    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6) != GPIO_PIN_SET ||
-        HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) != GPIO_PIN_SET)
-    {
-        return HAL_ERROR;
-    }
-
-
-    /* 4. Force SDA LOW */
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
-    HAL_Delay(1);
-
-    /* 5. Verify SDA is LOW */
-    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) != GPIO_PIN_RESET)
-    {
-        return HAL_ERROR;
-    }
-
-
-    /* 6. Force SCL LOW */
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
-    HAL_Delay(1);
-
-    /* 7. Verify SCL is LOW */
-    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6) != GPIO_PIN_RESET)
-    {
-        return HAL_ERROR;
-    }
-
-
-    /* 8. Release SCL HIGH */
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
-    HAL_Delay(1);
-
-    /* 9. Verify SCL is HIGH */
-    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6) != GPIO_PIN_SET)
-    {
-        return HAL_ERROR;
-    }
-
-
-    /* 10. Release SDA HIGH */
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
-    HAL_Delay(1);
-
-    /* 11. Verify SDA is HIGH */
-    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) != GPIO_PIN_SET)
-    {
-        return HAL_ERROR;
-    }
-
-
-    /* 12. Give PB6/PB7 back to the I2C peripheral */
-    GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-
-    /* 13 + 14. Software-reset I2C1 */
-    SET_BIT(I2C1->CR1, I2C_CR1_SWRST);
-    HAL_Delay(1);
-    CLEAR_BIT(I2C1->CR1, I2C_CR1_SWRST);
-
-
-    /*
-     * Re-run HAL initialization so CR2/CCR/TRISE/etc.
-     * are restored and I2C1 is enabled again.
-     */
-    if (HAL_I2C_Init(&hi2c1) != HAL_OK)
-    {
-        return HAL_ERROR;
-    }
-
-    return HAL_OK;
-}
 /* USER CODE END 0 */
 
 /**
@@ -278,27 +166,10 @@ int main(void)
     Error_Handler();
   }
 
-  /* Let AHT20 and I2C pull-ups stabilize first */
+  /* Give AHT20 time after power-up */
   HAL_Delay(100);
 
   UART_TransmitBoxBorder();
-
-  /* ============================= */
-  /* I2C BUS RECOVERY              */
-  /* ============================= */
-
-  if (I2C1_BusRecovery() == HAL_OK)
-  {
-    char recoveryMsg[] = "I2C recovery OK\r\n";
-
-    UART_TransmitBoxLine(recoveryMsg, sizeof(recoveryMsg) - 1);
-  }
-  else
-  {
-    char recoveryMsg[] = "I2C recovery FAILED\r\n";
-
-    UART_TransmitBoxLine(recoveryMsg, sizeof(recoveryMsg) - 1);
-  }
 
   /* ============================= */
   /* AHT20 INITIALIZATION          */

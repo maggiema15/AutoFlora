@@ -1,3 +1,52 @@
-build
+# =========================
+# Build output
+# =========================
+build/
+cmake-build-*/
+Debug/
+Release/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Ninja generated files
+.ninja_deps
+.ninja_log
+build.ninja
+rules.ninja
+
+# =========================
+# Compiled firmware/files
+# =========================
+*.o
+*.obj
+*.elf
+*.hex
+*.bin
+*.map
+*.a
+*.d
+
+# =========================
+# VS Code local files
+# =========================
+.vscode/
+
+# =========================
+# CMake user-specific config
+# =========================
+CMakeUserPresets.json
 mx.scratch
-!.settings
+
+# =========================
+# OS / miscellaneous
+# =========================
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+*~
